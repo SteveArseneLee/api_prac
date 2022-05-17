@@ -119,8 +119,6 @@ SEOUL_DATA_API_KEYS = {
 
 
 
-
-
 def get_openapi_seoul_data(service_key, start, end, type="json", year="", sub_info=""):
     req_url = SEOUL_URL.format(DATA_SEOUL_API_KEY, type, service_key, start, end)
     if year:
