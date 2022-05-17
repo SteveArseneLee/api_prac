@@ -1,5 +1,18 @@
 import datetime
+import logging
 import requests
+
+DATA_SEOUL_API_KEY = "41514341767265643534646b6f634c"  # 22.05.13
+
+# 일반 인증키(Encoding)
+DATA_GO_KR_EN = "goDElEv6gwXdZXibMpPYUHbm9fghO9emaUEGhx4Lu1Ycxj1t0liUCjYL97T9UtnS4qnfo8VkNOdbN94vO7Ce0g%3D%3D"
+# 일반 인증키(Decoding )
+DATA_GO_KR_DE = "goDElEv6gwXdZXibMpPYUHbm9fghO9emaUEGhx4Lu1Ycxj1t0liUCjYL97T9UtnS4qnfo8VkNOdbN94vO7Ce0g=="
+
+DATA_GOV_URL = "https://api.odcloud.kr/api/{}"
+
+SEOUL_URL = "http://openAPI.seoul.go.kr:8088/{}/{}/{}/{}/{}"
+
 dt_kst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
 
 YEAR = dt_kst.year
@@ -105,126 +118,113 @@ SEOUL_DATA_API_KEYS = {
 }
 
 
-response = requests.get("https://www.nemoapp.kr/api/region/submunicipalities/{}")
 
 
-def get_submunicipality_code(municipality_code):
-    """
-    법정동 코드로 행정동 코드 가져오는 함수
-    `SEOUL_MUNICIPALITY_CODE` 변수에 정리 완료
-    """
-    res = requests.get(f"https://www.nemoapp.kr/api/region/submunicipalities/{b_dong_code}")
+
+def get_openapi_seoul_data(service_key, start, end, type="json", year="", sub_info=""):
+    req_url = SEOUL_URL.format(DATA_SEOUL_API_KEY, type, service_key, start, end)
+    if year:
+        req_url += f"/{year}"
+    res = requests.get(url=req_url, headers=DEFAULT_HEADERS)
+
+    if res.status_code != 200:
+        logging.error(f"[{res.status_code}] api requests fails")
+        return {}
+    try:
+        if type == "json":
+            data = res.json().get(service_key, {})
+
+        status = data["RESULT"]
+        if status["CODE"] != "INFO-000":
+            logging.error(f"[{status['CODE']}] {status['MESSAGE']}")
+            return {}
+
+        total_count = data.get("list_total_count", -1)
+        result = data.get("row", [])
+
+        res = {"count": total_count, "data": result}
+        if year:
+            res.update({"year": year})
+        return res
+    except Exception as e:
+        logging.error(e.__str__())
+        return {}
+
+
+def get_odcloud_gov_data(service, page, size, type="json", sub_params={}):
+    req_url = DATA_GOV_URL.format(DATA_GO_KR_API_KEYS.get(service))
+    headers = {"accept": "application/json", "Authorization": DATA_GO_KR_EN}
+
+    params = {"serviceKey": DATA_GO_KR_DE, "type": "json"}
+    if sub_params:
+        params.update({**sub_params})
+    else:
+        params.update({"page": page, "perPage": size})
+
+    if type == "XML":
+        params.update({"returnType": type, "type": type})
+
+    res = requests.get(url=req_url, params=params, headers=headers)
+
     if res.status_code != 200:
         raise Exception(f"[{res.status_code}] api requests fails")
 
-    b_dong_list = res.json()
+    data = res.json()
 
-    if not b_dong_list:
-        raise Exception("wrong municipality_code")
+    total_count = data.get("currentCount", -1)
+    result = data.get("data", [])
 
-    return b_dong_list
+    return {"count": total_count, "data": result}
 
 
-def get_product(lng, lat, page=0, zoom=15):  # 126  # 37
-    """
-    매물 정보를 가져오는 함수
-    """
-    headers = {
-        "authority": "www.nemoapp.kr",
-        "accept": "application/json, text/javascript, */*; q=0.01",
-        "accept-language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-        "dnt": "1",
-        "referer": "https://www.nemoapp.kr/Search?ArticleType=1&PageIndex=0&SWLng=126.97309390890551&SWLat=37.47424501269658&NELng=127.02601325584673&NELat=37.50761852998374&Zoom=15&mode=1&category=1&list=true&articleId=&dataType=",
-        # 'request-context': 'appId=cid-v1:1a712dbb-d192-463e-b00b-18b83a52bb78',
-        # 'request-id': '|ef7e599764504c8a9015095b37f24602.d948577b90b14056',
-        "sec-ch-ua": '" Not A;Brand";v="99", "Chromium";v="101", "Google Chrome";v="101"',
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": '"Windows"',
-        "sec-fetch-dest": "empty",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-origin",
-        # 'traceparent': '00-ef7e599764504c8a9015095b37f24602-d948577b90b14056-01',
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.64 Safari/537.36",
-        "x-requested-with": "XMLHttpRequest",
-    }
+def get_all_openapi_data():
+    result = list()
+    ## 서울시 데이터는 정형화 되어 있음.
+    for key, data_api_key in SEOUL_DATA_API_KEYS.items():
+        try:
+            start, limit = 0, 20
+            while True:
+                for year in [2017, 2018, 2019, 2020, 2021, 2022]:
+                    res = get_openapi_seoul_data(
+                        service_key=data_api_key,
+                        start=start,
+                        end=start + limit,
+                        year=year,
+                    )
+                    if not res.get("data"):
+                        break
+                    res = {"key": key, **res}
 
-    params = {
-        "Radius": "",
-        "Latitude": "",
-        "Longitude": "",
-        "Building": "",
-        "PageSize": "",
-        "SortBy": "",
-        "DepositMin": "",
-        "DepositMax": "",
-        "MRentMin": "",
-        "MRentMax": "",
-        "SaleMin": "",
-        "SaleMax": "",
-        "Premium": "",
-        "PremiumMin": "",
-        "PremiumMax": "",
-        "DealType": "",
-        "ArticleType": "1",
-        "BuildingType": "",
-        "PriceType": "",
-        "SizeMin": "",
-        "SizeMax": "",
-        "MFeeMin": "",
-        "MFeeMax": "",
-        "Floor": "",
-        "IsAllFloors": "",
-        "Parking": "",
-        "ParkingSlotMin": "",
-        "ParkingSlotMax": "",
-        "Interior": "",
-        "Elevator": "",
-        "IndependentSpaceCount": "",
-        "Toilet": "",
-        "BYearMin": "",
-        "BYearMax": "",
-        "RoofTop": "",
-        "Terrace": "",
-        "PantryRoom": "",
-        "AirConditioner": "",
-        "VR": "",
-        "OfficeShare": "",
-        "ShopInShop": "",
-        "OpenLateNight": "",
-        "Remodeling": "",
-        "AddSpaceOffer": "",
-        "BusinessField": "",
-        "IsExclusive": "",
-        "AgentId": "",
-        "UserId": "",
-        "PageIndex": page,
-        "Region": "",
-        "Subway": "",
-        "StoreTrade": "",
-        "CompletedOnly": "",
-        "LBiz": "",
-        "MBiz": "",
-        "InitialExpMin": "",
-        "InitialExpMax": "",
-        "IsCommercialDistrictUnknown": "",
-        "IsCommercialDistrictSubway": "",
-        "IsCommercialDistrictUniversity": "",
-        "IsCommercialDistrictOffice": "",
-        "IsCommercialDistrictResidential": "",
-        "IsCommercialDistrictDowntown": "",
-        "IsCommercialDistrictSuburbs": "",
-        "MoveInDate": "",
-        "HeatingType": "",
-        "SWLng": lng,
-        "SWLat": lat,
-        "NELng": lng + 1,
-        "NELat": lat + 1,
-        "Zoom": zoom,
-    }
+                    result.append(res)  # 아니면 여기를 kafka producer와 연결해야 한다.
+                start += limit
 
-    res = requests.get("https://www.nemoapp.kr/api/articles/search/", params=params, headers=headers)
-    if res.status_code != 200:
-        raise Exception(f"[{res.status_code}] api requests fails")
+        except Exception as e:
+            print(e)
+            continue
 
-    raw_data = res.json()
-    return {"next": raw_data["hasNextPage"], "data": raw_data["items"]}
+    for key, data_api_key in DATA_GO_KR_API_KEYS.items():
+        try:
+            page, limit = 1, 20
+            while True:
+                res = get_odcloud_gov_data(
+                    service_key=data_api_key,
+                    page=page,
+                    size=limit,
+                )
+
+                if not res.get("data"):
+                    break
+                res = {"key": key, **res}
+                result.append(res)  # 아니면 여기를 kafka producer와 연결해야 한다.
+            start += limit
+
+        except Exception as e:
+            print(e)
+            continue
+
+    return result
+
+if __name__ == "__main__":
+    # print(__name__)
+    res = get_all_openapi_data()
+    print(res)
